@@ -37,7 +37,7 @@ file(GLOB faiss_cpu_headers ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 file(GLOB faiss_cpu_cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 
 set(faiss_lib faiss)
-add_library(${faiss_lib} STATIC ${faiss_cpu_headers} ${faiss_cpu_cpp})
+add_library(${faiss_lib} SHARED ${faiss_cpu_headers} ${faiss_cpu_cpp})
 target_link_libraries(${faiss_lib} ${OpenMP_CXX_FLAGS} ${BLAS_LIB})
 
 # build gpu lib
@@ -45,13 +45,3 @@ if(BUILD_WITH_GPU)
     include(cmake/Cuda.cmake)
     add_subdirectory(gpu)
 endif(BUILD_WITH_GPU)
-
-# build tutorial examples
-if(BUILD_TUTORIAL)
-    add_subdirectory(tutorial)
-endif(BUILD_TUTORIAL)
-
-# build tests
-if(BUILD_TEST)
-    add_subdirectory(tests)
-endif(BUILD_TEST)
