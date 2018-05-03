@@ -39,8 +39,3 @@ file(GLOB faiss_cpu_cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 set(faiss_lib faiss)
 add_library(${faiss_lib} SHARED ${faiss_cpu_headers} ${faiss_cpu_cpp})
 target_link_libraries(${faiss_lib} ${OpenMP_CXX_FLAGS} ${BLAS_LIB})
-
-# build gpu lib
-if(BUILD_WITH_GPU)
-    add_subdirectory(gpu)
-endif(BUILD_WITH_GPU)
