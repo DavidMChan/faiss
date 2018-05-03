@@ -42,6 +42,5 @@ target_link_libraries(${faiss_lib} ${OpenMP_CXX_FLAGS} ${BLAS_LIB})
 
 # build gpu lib
 if(BUILD_WITH_GPU)
-    include(cmake/Cuda.cmake)
     add_subdirectory(gpu)
 endif(BUILD_WITH_GPU)
