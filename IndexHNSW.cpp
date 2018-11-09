@@ -6,6 +6,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+// -*- c++ -*-
+
 #include "IndexHNSW.h"
 
 
@@ -24,7 +26,9 @@
 #include <unistd.h>
 #include <stdint.h>
 
+#ifdef __SSE__
 #include <immintrin.h>
+#endif
 
 #include "utils.h"
 #include "Heap.h"
@@ -1694,19 +1698,17 @@ struct PQDis: HNSW::DistanceComputer {
         return accu;
     }
 
-
-    PQDis(const IndexPQ & storage, const float *q = nullptr):
-        pq(storage.pq)
-    {
-        precomputed_table.resize(pq.M * pq.ksub);
-        nb = storage.ntotal;
-        d = storage.d;
-        codes = storage.codes.data();
-        code_size = pq.code_size;
-        FAISS_ASSERT(pq.ksub == 256);
-        FAISS_ASSERT(pq.sdc_table.size() == pq.ksub * pq.ksub * pq.M);
-        sdc = pq.sdc_table.data();
-        ndis = 0;
+    PQDis(const IndexPQ& storage, const float* /*q*/ = nullptr)
+        : pq(storage.pq) {
+      precomputed_table.resize(pq.M * pq.ksub);
+      nb = storage.ntotal;
+      d = storage.d;
+      codes = storage.codes.data();
+      code_size = pq.code_size;
+      FAISS_ASSERT(pq.ksub == 256);
+      FAISS_ASSERT(pq.sdc_table.size() == pq.ksub * pq.ksub * pq.M);
+      sdc = pq.sdc_table.data();
+      ndis = 0;
     }
 
     void set_query(const float *x) override {
@@ -1771,15 +1773,13 @@ struct SQDis: HNSW::DistanceComputer {
         return dc->compute_code_distance (codei, codej);
     }
 
-
-    SQDis(const IndexScalarQuantizer & storage, const float *q = nullptr):
-        sq(storage.sq)
-    {
-        nb = storage.ntotal;
-        d = storage.d;
-        codes = storage.codes.data();
-        code_size = sq.code_size;
-        dc = sq.get_distance_computer();
+    SQDis(const IndexScalarQuantizer& storage, const float* /*q*/ = nullptr)
+        : sq(storage.sq) {
+      nb = storage.ntotal;
+      d = storage.d;
+      codes = storage.codes.data();
+      code_size = sq.code_size;
+      dc = sq.get_distance_computer();
     }
 
     void set_query(const float *x) override {
@@ -1871,6 +1871,7 @@ struct DistanceXPQ4: Distance2Level {
 
     float operator () (storage_idx_t i) override
     {
+#ifdef __SSE__
         const uint8_t *code = storage.codes.data() + i * storage.code_size;
         long key = 0;
         memcpy (&key, code, storage.code_size_1);
@@ -1894,6 +1895,9 @@ struct DistanceXPQ4: Distance2Level {
         accu = _mm_hadd_ps (accu, accu);
         accu = _mm_hadd_ps (accu, accu);
         return  _mm_cvtss_f32 (accu);
+#else
+        FAISS_THROW_MSG("not implemented for non-x64 platforms");
+#endif
     }
 
 };
@@ -1922,6 +1926,7 @@ struct Distance2xXPQ4: Distance2Level {
         long key01 = 0;
         memcpy (&key01, code, storage.code_size_1);
         code += storage.code_size_1;
+#ifdef __SSE__
 
         // walking pointers
         const float *qa = q;
@@ -1947,6 +1952,9 @@ struct Distance2xXPQ4: Distance2Level {
         accu = _mm_hadd_ps (accu, accu);
         accu = _mm_hadd_ps (accu, accu);
         return  _mm_cvtss_f32 (accu);
+#else
+        FAISS_THROW_MSG("not implemented for non-x64 platforms");
+#endif
     }
 
 };
@@ -1959,6 +1967,7 @@ HNSW::DistanceComputer * IndexHNSW2Level::get_distance_computer () const
         dynamic_cast<Index2Layer*>(storage);
 
     if (storage2l) {
+#ifdef __SSE__
 
         const MultiIndexQuantizer *mi =
             dynamic_cast<MultiIndexQuantizer*> (storage2l->q1.quantizer);
@@ -1973,6 +1982,7 @@ HNSW::DistanceComputer * IndexHNSW2Level::get_distance_computer () const
         if (fl && storage2l->pq.dsub == 4) {
             return new DistanceXPQ4(*storage2l);
         }
+#endif
     }
 
     // IVFPQ and cases not handled above

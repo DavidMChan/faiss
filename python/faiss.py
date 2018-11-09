@@ -18,14 +18,14 @@ import pdb
 # we import * so that the symbol X can be accessed as faiss.X
 
 try:
-    from swigfaiss_gpu import *
+    from .swigfaiss_gpu import *
 except ImportError as e:
 
     if 'No module named' not in e.args[0]:
         # swigfaiss_gpu is there but failed to load: Warn user about it.
         sys.stderr.write("Failed to load GPU Faiss: %s\n" % e.args[0])
         sys.stderr.write("Faiss falling back to CPU-only.\n")
-    from swigfaiss import *
+    from .swigfaiss import *
 
 
 ##################################################################
@@ -105,6 +105,13 @@ def handle_Index(the_class):
         assert ids.shape == (n, ), 'not same nb of vectors as ids'
         self.add_with_ids_c(n, swig_ptr(x), swig_ptr(ids))
 
+    def replacement_assign(self, x, k):
+        n, d = x.shape
+        assert d == self.d
+        labels = np.empty((n, k), dtype=np.int64)
+        self.assign_c(n, swig_ptr(x), swig_ptr(labels), k)
+        return labels
+
     def replacement_train(self, x):
         assert x.flags.contiguous
         n, d = x.shape
@@ -171,6 +178,7 @@ def handle_Index(the_class):
 
     replace_method(the_class, 'add', replacement_add)
     replace_method(the_class, 'add_with_ids', replacement_add_with_ids)
+    replace_method(the_class, 'assign', replacement_assign)
     replace_method(the_class, 'train', replacement_train)
     replace_method(the_class, 'search', replacement_search)
     replace_method(the_class, 'remove_ids', replacement_remove_ids)
@@ -181,6 +189,41 @@ def handle_Index(the_class):
                    ignore_missing=True)
     replace_method(the_class, 'search_and_reconstruct',
                    replacement_search_and_reconstruct, ignore_missing=True)
+
+def handle_IndexBinary(the_class):
+
+    def replacement_add(self, x):
+        assert x.flags.contiguous
+        n, d = x.shape
+        assert d * 8 == self.d
+        self.add_c(n, swig_ptr(x))
+
+    def replacement_add_with_ids(self, x, ids):
+        n, d = x.shape
+        assert d * 8 == self.d
+        assert ids.shape == (n, ), 'not same nb of vectors as ids'
+        self.add_with_ids_c(n, swig_ptr(x), swig_ptr(ids))
+
+    def replacement_train(self, x):
+        assert x.flags.contiguous
+        n, d = x.shape
+        assert d * 8 == self.d
+        self.train_c(n, swig_ptr(x))
+
+    def replacement_search(self, x, k):
+        n, d = x.shape
+        assert d * 8 == self.d
+        distances = np.empty((n, k), dtype=np.int32)
+        labels = np.empty((n, k), dtype=np.int64)
+        self.search_c(n, swig_ptr(x),
+                      k, swig_ptr(distances),
+                      swig_ptr(labels))
+        return distances, labels
+
+    replace_method(the_class, 'add', replacement_add)
+    replace_method(the_class, 'add_with_ids', replacement_add_with_ids)
+    replace_method(the_class, 'train', replacement_train)
+    replace_method(the_class, 'search', replacement_search)
 
 def handle_VectorTransform(the_class):
 
@@ -250,6 +293,9 @@ for symbol in dir(this_module):
         if issubclass(the_class, Index):
             handle_Index(the_class)
 
+        if issubclass(the_class, IndexBinary):
+            handle_IndexBinary(the_class)
+
         if issubclass(the_class, VectorTransform):
             handle_VectorTransform(the_class)
 
@@ -258,6 +304,88 @@ for symbol in dir(this_module):
 
         if issubclass(the_class, ParameterSpace):
             handle_ParameterSpace(the_class)
+
+
+###########################################
+# Add Python references to objects
+# we do this at the Python class wrapper level.
+###########################################
+
+def add_ref_in_constructor(the_class, parameter_no):
+    # adds a reference to parameter parameter_no in self
+    # so that that parameter does not get deallocated before self
+    original_init = the_class.__init__
+
+    def replacement_init(self, *args):
+        original_init(self, *args)
+        self.referenced_objects = [args[parameter_no]]
+
+    def replacement_init_multiple(self, *args):
+        original_init(self, *args)
+        pset = parameter_no[len(args)]
+        self.referenced_objects = [args[no] for no in pset]
+
+    if type(parameter_no) == dict:
+        # a list of parameters to keep, depending on the number of arguments
+        the_class.__init__ = replacement_init_multiple
+    else:
+        the_class.__init__ = replacement_init
+
+def add_ref_in_method(the_class, method_name, parameter_no):
+    original_method = getattr(the_class, method_name)
+    def replacement_method(self, *args):
+        ref = args[parameter_no]
+        if not hasattr(self, 'referenced_objects'):
+            self.referenced_objects = [ref]
+        else:
+            self.referenced_objects.append(ref)
+        return original_method(self, *args)
+    setattr(the_class, method_name, replacement_method)
+
+def add_ref_in_function(function_name, parameter_no):
+    # assumes the function returns an object
+    original_function = getattr(this_module, function_name)
+    def replacement_function(*args):
+        result = original_function(*args)
+        ref = args[parameter_no]
+        result.referenced_objects = [ref]
+        return result
+    setattr(this_module, function_name, replacement_function)
+
+add_ref_in_constructor(IndexIVFFlat, 0)
+add_ref_in_constructor(IndexIVFFlatDedup, 0)
+add_ref_in_constructor(IndexPreTransform, {2: [0, 1], 1: [0]})
+add_ref_in_method(IndexPreTransform, 'prepend_transform', 0)
+add_ref_in_constructor(IndexIVFPQ, 0)
+add_ref_in_constructor(IndexIVFPQR, 0)
+add_ref_in_constructor(Index2Layer, 0)
+add_ref_in_constructor(Level1Quantizer, 0)
+add_ref_in_constructor(IndexIVFScalarQuantizer, 0)
+add_ref_in_constructor(IndexIDMap, 0)
+add_ref_in_constructor(IndexIDMap2, 0)
+add_ref_in_method(IndexShards, 'add_shard', 0)
+add_ref_in_constructor(IndexRefineFlat, 0)
+
+add_ref_in_constructor(IndexBinaryIVF, 0)
+add_ref_in_constructor(IndexBinaryFromFloat, 0)
+
+
+if hasattr(this_module, 'IndexProxy'):
+    add_ref_in_method(IndexProxy, 'addIndex', 0)
+    # seems really marginal...
+    # remove_ref_from_method(IndexProxy, 'removeIndex', 0)
+
+    # handle all the GPUResources refs
+    add_ref_in_function('index_cpu_to_gpu', 0)
+    add_ref_in_constructor(GpuIndexFlat, 0)
+    add_ref_in_constructor(GpuIndexIVFFlat, 0)
+    add_ref_in_constructor(GpuIndexIVFPQ, 0)
+
+
+
+###########################################
+# GPU functions
+###########################################
 
 
 def index_cpu_to_gpu_multiple_py(resources, index, co=None):
@@ -269,22 +397,27 @@ def index_cpu_to_gpu_multiple_py(resources, index, co=None):
     for i, res in enumerate(resources):
         vdev.push_back(i)
         vres.push_back(res)
-    return index_cpu_to_gpu_multiple(vres, vdev, index, co)
-
+    index = index_cpu_to_gpu_multiple(vres, vdev, index, co)
+    index.referenced_objects = resources
+    return index
 
 def index_cpu_to_all_gpus(index, co=None, ngpu=-1):
     if ngpu == -1:
         ngpu = get_num_gpus()
     res = [StandardGpuResources() for i in range(ngpu)]
     index2 = index_cpu_to_gpu_multiple_py(res, index, co)
-    index2.dont_dealloc = res
     return index2
 
+
+###########################################
+# numpy array / std::vector conversions
+###########################################
 
 # mapping from vector names in swigfaiss.swig and the numpy dtype names
 vector_name_map = {
     'Float': 'float32',
     'Byte': 'uint8',
+    'Char': 'int8',
     'Uint64': 'uint64',
     'Long': 'int64',
     'Int': 'int32',
@@ -318,39 +451,9 @@ def copy_array_to_vector(a, v):
     memcpy(v.data(), swig_ptr(a), a.nbytes)
 
 
-class Kmeans:
-
-    def __init__(self, d, k, niter=25, verbose=False, spherical = False):
-        self.d = d
-        self.k = k
-        self.cp = ClusteringParameters()
-        self.cp.niter = niter
-        self.cp.verbose = verbose
-        self.cp.spherical = spherical
-        self.centroids = None
-
-    def train(self, x):
-        assert x.flags.contiguous
-        n, d = x.shape
-        assert d == self.d
-        clus = Clustering(d, self.k, self.cp)
-        if self.cp.spherical:
-            self.index = IndexFlatIP(d)
-        else:
-            self.index = IndexFlatL2(d)
-        clus.train(x, self.index)
-        centroids = vector_float_to_array(clus.centroids)
-        self.centroids = centroids.reshape(self.k, d)
-        self.obj = vector_float_to_array(clus.obj)
-        return self.obj[-1]
-
-    def assign(self, x):
-        assert self.centroids is not None, "should train before assigning"
-        index = IndexFlatL2(self.d)
-        index.add(self.centroids)
-        D, I = index.search(x, 1)
-        return D.ravel(), I.ravel()
-
+###########################################
+# Wrapper for a few functions
+###########################################
 
 def kmin(array, k):
     """return k smallest values (and their indices) of the lines of a
@@ -433,3 +536,42 @@ def replacement_map_search_multiple(self, keys):
 
 replace_method(MapLong2Long, 'add', replacement_map_add)
 replace_method(MapLong2Long, 'search_multiple', replacement_map_search_multiple)
+
+
+###########################################
+# Kmeans object
+###########################################
+
+
+class Kmeans:
+
+    def __init__(self, d, k, niter=25, verbose=False, spherical = False):
+        self.d = d
+        self.k = k
+        self.cp = ClusteringParameters()
+        self.cp.niter = niter
+        self.cp.verbose = verbose
+        self.cp.spherical = spherical
+        self.centroids = None
+
+    def train(self, x):
+        assert x.flags.contiguous
+        n, d = x.shape
+        assert d == self.d
+        clus = Clustering(d, self.k, self.cp)
+        if self.cp.spherical:
+            self.index = IndexFlatIP(d)
+        else:
+            self.index = IndexFlatL2(d)
+        clus.train(x, self.index)
+        centroids = vector_float_to_array(clus.centroids)
+        self.centroids = centroids.reshape(self.k, d)
+        self.obj = vector_float_to_array(clus.obj)
+        return self.obj[-1]
+
+    def assign(self, x):
+        assert self.centroids is not None, "should train before assigning"
+        index = IndexFlatL2(self.d)
+        index.add(self.centroids)
+        D, I = index.search(x, 1)
+        return D.ravel(), I.ravel()

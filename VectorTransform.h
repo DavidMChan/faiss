@@ -6,7 +6,6 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 // -*- c++ -*-
 
 #ifndef FAISS_VECTOR_TRANSFORM_H
@@ -135,7 +134,7 @@ struct PCAMatrix: LinearTransform {
      * eigenvalues^eigen_power
      *
      * =0: no whitening
-     * =-2: full whitening
+     * =-0.5: full whitening
      */
     float eigen_power;
 
@@ -304,9 +303,7 @@ struct IndexPreTransform: Index {
 };
 
 
-
 } // namespace faiss
-
 
 
 #endif
